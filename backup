@@ -1,0 +1,232 @@
+#!/bin/bash
+
+PID_FILE=~/.backup_pid
+
+# Uncomment this to enable debugging.
+#DRY_RUN=1
+
+function main()
+{
+   if [ -n "$DRY_RUN" ]; then
+      echo "Warning: Running backup script in dry-run mode, no files are actually copied"
+   fi
+
+   # Don't start when this script is already running.
+   if [ -e "$PID_FILE" ]; then
+      PID=`cat "$PID_FILE"`
+      echo "Error: backup process already running with id $PID"
+      exit 1
+   fi
+   echo $$ > "$PID_FILE"
+   if [ -n "$DRY_RUN" ]; then
+      echo "Created pid file '$PID_FILE'"
+   fi
+
+   # Check which configuration files are present and call functions to make the backups.
+   if [ -e ~/.backup-local.conf -a -r ~/.backup-local.conf ]; then
+      backup_local ~/.backup-local.conf
+   elif [ -e /etc/backup-local.conf -a -r /etc/backup-local.conf ]; then
+      backup_local /etc/backup-local.conf
+   fi
+   if [ -e ~/.backup-remote-duplicity.conf -a -r ~/.backup-remote-duplicity.conf ]; then
+      backup_remote_duplicity ~/.backup-remote-duplicity.conf
+   elif [ -e /etc/backup-remote-duplicity.conf -a -r /etc/backup-remote-duplicity.conf ]; then
+      backup_remote_duplicity /etc/backup-remote-duplicity.conf
+   fi
+   if [ -e ~/.backup-remote-rsync.conf -a -r ~/.backup-remote-rsync.conf ]; then
+      backup_remote_rsync ~/.backup-remote-rsync.conf
+   elif [ -e /etc/backup-remote-rsync.conf -a -r /etc/backup-remote-rsync.conf ]; then
+      backup_remote_rsync /etc/backup-remote-rsync.conf
+   fi
+   if [ -z "$CONFIGURATION_FOUND" ]; then
+      echo "Error: no backup configuration file(s) present"
+      exit_with_error
+   fi
+
+   # We're finished, so delete the lock file.
+   rm "$PID_FILE"
+}
+
+# Function to make a backup to the local filesystem.
+function backup_local()
+{
+   # Read the configuration file.
+   read_configuration "$1"
+
+   # Mount the backup location (if necessary).
+   if [ "$MOUNT" = "yes" ]; then
+      if ! grep -q -e $LOCATION /etc/mtab; then
+         MOUNT_OUTPUT=`mount $LOCATION 2>&1`
+         MOUNT_RESULT=$?
+         if [ $MOUNT_RESULT -gt 0 ]; then
+            echo "Error: failed to mount '$LOCATION': $MOUNT_OUTPUT"
+            exit_with_error
+         fi
+      fi
+   fi
+
+   # Create incrementals into subdirectories named after the day of the week.
+   INCREMENTAL_DIRECTORY=`date +%A`
+
+   # Clear last week's incremental directory.
+   [ -d /tmp/emptydir ] || mkdir /tmp/emptydir
+   rsync --delete -a /tmp/emptydir/ $LOCATION/$INCREMENTAL_DIRECTORY/
+   rmdir /tmp/emptydir
+
+   # Loop through all the folders to backup.
+   for FOLDER in $FOLDERS; do
+
+      # Set some options for the rsync program.
+      OPTIONS="--force
+               --delete-excluded
+               --delete
+               --backup
+               --backup-dir=$LOCATION/$INCREMENTAL_DIRECTORY
+               -a"
+
+      # Every backup folder may contain a file called .backup_excludes_rsync that contains exclude patterns.
+      EXCLUDE_FILE=$FOLDER/.backup_excludes_rsync
+      if [ -f $EXCLUDE_FILE ]; then
+         OPTIONS="$OPTIONS --exclude-from=$EXCLUDE_FILE"
+      fi
+
+      # The actual transfer.
+      if [ -z "$DRY_RUN" ]; then
+         rsync $OPTIONS $FOLDER $LOCATION/Current
+      else
+         echo "Executing: rsync --dry-run $OPTIONS $FOLDER $LOCATION/Current"
+         rsync --dry-run $OPTIONS $FOLDER $LOCATION/Current
+      fi
+
+   done
+
+   # Sync the disks with memory.
+   sync
+
+   # Unmount the backup location (if necessary).
+   if [ "$MOUNT" = "yes" ]; then
+      if grep -q -e $LOCATION /etc/mtab; then
+         umount $LOCATION
+      fi
+   fi
+}
+
+function backup_remote_duplicity()
+{
+   # Read the configuration file.
+   read_configuration "$1"
+
+   # Loop through all the folders to backup.
+   for FOLDER in $FOLDERS; do
+
+      # Set some options for the duplicity program.
+      OPTIONS="--archive-dir /root/duplicity
+               --log-file /var/log/duplicity.log
+               --verbosity 0
+               --no-print-statistics"
+
+      # Create a symbolic name to identify the backup by replacing the
+      # slashes in the backup path with underscores.
+      SYMBOLIC_NAME=${FOLDER:1}
+      SYMBOLIC_NAME=${SYMBOLIC_NAME//\//_}
+      OPTIONS="$OPTIONS --name $SYMBOLIC_NAME"
+
+      # Every backup folder may contain a file called .backup_excludes_duplicity that contains exclude patterns.
+      EXCLUDE_FILE=$FOLDER/.backup_excludes_duplicity
+      if [ -f $EXCLUDE_FILE ]; then
+         OPTIONS="$OPTIONS --exclude-globbing-filelist $EXCLUDE_FILE"
+      fi
+
+      # The actual transfer.
+      # To limit the upload bandwidth: --scp-command "scp -l [### Kbit/s]"
+      if [ -z "$DRY_RUN" ]; then
+         PASSPHRASE=$PASSPHRASE duplicity $OPTIONS $FOLDER scp://$USER@$SERVER$LOCATION/$SYMBOLIC_NAME
+      else
+         echo "Executing: duplicity --dry-run $OPTIONS $FOLDER scp://$USER@$SERVER$LOCATION/$SYMBOLIC_NAME"
+         PASSPHRASE=$PASSPHRASE duplicity --dry-run $OPTIONS $FOLDER scp://$USER@$SERVER$LOCATION/$SYMBOLIC_NAME
+      fi
+
+   done
+}
+
+function backup_remote_rsync()
+{
+   # Read the configuration file.
+   read_configuration "$1"
+
+   # Loop through all the folders to backup.
+   for FOLDER in $FOLDERS; do
+
+      # Set some options for the rsync program.
+      DATE=`date +"%Y%m%d"`
+      if [ -z "$DELETEDFILESFOLDER" ]; then
+         DELETEDFILESFOLDER=rsync_backup
+      fi
+      BACKUP_DIRECTORY="$DELETEDFILESFOLDER/$DATE"
+      OPTIONS="--force
+               --delete
+               --delete-excluded
+               --backup
+               --backup-dir="$BACKUP_DIRECTORY"
+               -a"
+
+      # Every backup folder may contain a file called .backup_excludes_rsync that contains exclude patterns.
+      EXCLUDE_FILE=$FOLDER/.backup_excludes_rsync
+      if [ -f $EXCLUDE_FILE ]; then
+         OPTIONS="$OPTIONS --exclude-from=$EXCLUDE_FILE"
+      fi
+
+      # The actual transfer.
+      if [ -z "$DRY_RUN" ]; then
+         rsync $OPTIONS $FOLDER $USER@$SERVER:$LOCATION
+      else
+         echo "Executing: rsync --dry-run $OPTIONS $FOLDER $USER@$SERVER:$LOCATION"
+         rsync --dry-run -i $OPTIONS $FOLDER $USER@$SERVER:$LOCATION
+      fi
+
+   done
+}
+
+# Reads and checks the specified configuration file.
+function read_configuration()
+{
+   # Read the configuration file.
+   if [ -z "$1" -o ! -e "$1" ]; then
+      echo "Error: failed to load configuration file '$1'"
+      exit_with_error
+   else
+      if [ ! -r "$1" ]; then
+         echo "Error: no read permission on the configuration file '$1'"
+         exit_with_error
+      else
+         . "$1"
+         CONFIGURATION_FOUND=1
+      fi
+   fi
+
+   # Check if the backup source folders really exist.
+   if [ -z "$FOLDERS" ]; then
+      echo "Error: no backup source folders specified"
+      exit_with_error
+   fi
+   for FOLDER in $FOLDERS; do
+      if [ "${FOLDER:0:1}" != "/" ]; then
+         echo "Error: backup source folder '$FOLDER' is not an absolute path"
+         exit_with_error
+      fi
+      if [ ! -d "$FOLDER" ]; then
+         echo "Error: backup source folder '$FOLDER' not found"
+         exit_with_error
+      fi
+   done
+}
+
+function exit_with_error()
+{
+   rm "$PID_FILE"
+   exit 1
+}
+
+# Start the script.
+main
+
