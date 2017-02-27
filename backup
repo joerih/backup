@@ -82,7 +82,8 @@ function backup_local()
                --delete
                --backup
                --backup-dir=$LOCATION/$INCREMENTAL_DIRECTORY
-               -a"
+               -a
+               --quiet"
 
       # Every backup folder may contain a file called .backup_excludes_rsync that contains exclude patterns.
       EXCLUDE_FILE=$FOLDER/.backup_excludes_rsync
@@ -168,7 +169,8 @@ function backup_remote_rsync()
                --delete-excluded
                --backup
                --backup-dir="$BACKUP_DIRECTORY"
-               -a"
+               -a
+               --quiet"
 
       # Every backup folder may contain a file called .backup_excludes_rsync that contains exclude patterns.
       EXCLUDE_FILE=$FOLDER/.backup_excludes_rsync
