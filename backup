@@ -92,12 +92,11 @@ function backup_local()
       fi
 
       # The actual transfer.
-      if [ -z "$DRY_RUN" ]; then
-         rsync $OPTIONS $FOLDER $LOCATION/Current
-      else
-         echo "Executing: rsync --dry-run $OPTIONS $FOLDER $LOCATION/Current"
-         rsync --dry-run $OPTIONS $FOLDER $LOCATION/Current
+      if [ -n "$DRY_RUN" ]; then
+         OPTIONS="--dry-run -i $OPTIONS"
+         echo "Executing: rsync $OPTIONS $FOLDER $LOCATION/Current"
       fi
+      rsync $OPTIONS $FOLDER $LOCATION/Current
 
    done
 
@@ -139,13 +138,11 @@ function backup_remote_duplicity()
       fi
 
       # The actual transfer.
-      # To limit the upload bandwidth: --scp-command "scp -l [### Kbit/s]"
-      if [ -z "$DRY_RUN" ]; then
-         PASSPHRASE=$PASSPHRASE duplicity $OPTIONS $FOLDER scp://$USER@$SERVER$LOCATION/$SYMBOLIC_NAME
-      else
-         echo "Executing: duplicity --dry-run $OPTIONS $FOLDER scp://$USER@$SERVER$LOCATION/$SYMBOLIC_NAME"
-         PASSPHRASE=$PASSPHRASE duplicity --dry-run $OPTIONS $FOLDER scp://$USER@$SERVER$LOCATION/$SYMBOLIC_NAME
+      if [ -n "$DRY_RUN" ]; then
+         OPTIONS="--dry-run $OPTIONS"
+         echo "Executing: PASSPHRASE=******** duplicity $OPTIONS $FOLDER scp://$USER@$SERVER$LOCATION/$SYMBOLIC_NAME"
       fi
+      PASSPHRASE=$PASSPHRASE duplicity $OPTIONS $FOLDER scp://$USER@$SERVER$LOCATION/$SYMBOLIC_NAME
 
    done
 }
@@ -168,7 +165,7 @@ function backup_remote_rsync()
                --delete
                --delete-excluded
                --backup
-               --backup-dir="$BACKUP_DIRECTORY"
+               --backup-dir=$BACKUP_DIRECTORY
                -a
                --quiet"
 
@@ -179,12 +176,11 @@ function backup_remote_rsync()
       fi
 
       # The actual transfer.
-      if [ -z "$DRY_RUN" ]; then
-         rsync $OPTIONS $FOLDER $USER@$SERVER:$LOCATION
-      else
-         echo "Executing: rsync --dry-run $OPTIONS $FOLDER $USER@$SERVER:$LOCATION"
-         rsync --dry-run -i $OPTIONS $FOLDER $USER@$SERVER:$LOCATION
+      if [ -n "$DRY_RUN" ]; then
+         OPTIONS="--dry-run -i $OPTIONS"
+         echo "Executing: rsync $OPTIONS $FOLDER $USER@$SERVER:$LOCATION"
       fi
+      rsync $OPTIONS $FOLDER $USER@$SERVER:$LOCATION
 
    done
 }
