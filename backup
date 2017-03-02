@@ -116,13 +116,15 @@ function backup_remote_duplicity()
    # Read the configuration file.
    read_configuration "$1"
 
+   [[ ! -e ~/.duplicty ]] && mkdir -p ~/.duplicity
+
    # Loop through all the folders to backup.
    for FOLDER in $FOLDERS; do
 
       # Set some options for the duplicity program.
-      OPTIONS="--archive-dir /root/duplicity
-               --log-file /var/log/duplicity.log
-               --verbosity 0
+      OPTIONS="--archive-dir ~/.duplicity
+               --log-file ~/.duplicity/duplicity.log
+               --verbosity warning
                --no-print-statistics"
 
       # Create a symbolic name to identify the backup by replacing the
